@@ -176,8 +176,16 @@ impl VsockStream {
 
             match guard.try_io(|inner| inner.get_ref().write(buf)) {
                 Ok(Ok(n)) => return Ok(n).into(),
-                Ok(Err(ref e)) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                Ok(Err(e)) => return Err(e).into(),
+                Ok(Err(e)) => match e.kind() {
+                    std::io::ErrorKind::Interrupted => continue,
+                    std::io::ErrorKind::NotConnected => {
+                        tracing::error!("error during write = {:?}", e);
+                        return Err(e).into();
+                    }
+                    _ => {
+                        return Err(e).into();
+                    }
+                },
                 Err(_would_block) => continue,
             }
         }
@@ -204,8 +212,16 @@ impl VsockStream {
                     buf.advance(n);
                     return Ok(()).into();
                 }
-                Ok(Err(ref e)) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                Ok(Err(e)) => return Err(e).into(),
+                Ok(Err(e)) => match e.kind() {
+                    std::io::ErrorKind::Interrupted => continue,
+                    std::io::ErrorKind::NotConnected => {
+                        tracing::error!("error during read = {:?}", e);
+                        return Err(e).into();
+                    }
+                    _ => {
+                        return Err(e).into();
+                    }
+                },
                 Err(_would_block) => {
                     continue;
                 }
@@ -260,7 +276,10 @@ impl AsyncWrite for VsockStream {
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<()>> {
-        self.shutdown(std::net::Shutdown::Write)?;
+        self.shutdown(std::net::Shutdown::Write).map_err(|err| {
+            tracing::error!("error during shutdown = {:?}", err);
+            err
+        })?;
         Poll::Ready(Ok(()))
     }
 }
